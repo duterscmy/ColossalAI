@@ -82,7 +82,21 @@ class MLPExperts(nn.Module):
                 set_moe_tensor_info(param, self.moe_info)
 
         # init param
-        self.reset_parameters()
+        # self.reset_parameters()  # will use cuda()
+        #  File "/content/ColossalAI/colossalai/moe/layers.py", line 92, in __init__
+        #   self.experts = MLPExperts(
+        # File "/content/ColossalAI/colossalai/moe/experts.py", line 85, in __init__
+        #   self.reset_parameters()
+        # File "/usr/local/lib/python3.10/dist-packages/torch/utils/_contextlib.py", line 115, in decorate_context
+        #   return func(*args, **kwargs)
+        # File "/content/ColossalAI/colossalai/moe/experts.py", line 93, in reset_parameters
+        #   seed_ctx = Randomizer(42).fork_rng(enable_cpu=True)
+        # File "/content/ColossalAI/colossalai/shardformer/layer/utils.py", line 112, in __init__
+        #   device_original_rng_state = get_rng_state()
+        # File "/content/ColossalAI/colossalai/utils/device.py", line 117, in get_rng_state
+        #   return _dispatch_device_func("get_rng_state", device)
+        # File "/content/ColossalAI/colossalai/utils/device.py", line 53, in _dispatch_device_func
+        #   raise RuntimeError("No device available")
 
     @torch.no_grad()
     def reset_parameters(self):
