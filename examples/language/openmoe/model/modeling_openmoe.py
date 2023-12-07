@@ -170,11 +170,11 @@ def generate_fixed_pos_embedding(features, length, min_timescale=1.0, max_timesc
       output_sin: a float32 Tensor with shape [length, features]
       output_cos: a float32 Tensor with shape [length, features]
     """
-    fraction = torch.arange(0, features, 2, dtype=torch.float32).cuda() / features
+    fraction = torch.arange(0, features, 2, dtype=torch.float32).cpu() / features
     timescale = min_timescale * (max_timescale / min_timescale) ** fraction
     rotational_frequency = 1.0 / timescale
 
-    sinusoid_inp = torch.einsum("i,j->ij", torch.arange(length, dtype=torch.float32).cuda(), rotational_frequency)
+    sinusoid_inp = torch.einsum("i,j->ij", torch.arange(length, dtype=torch.float32).cpu(), rotational_frequency)
 
     sinusoid_inp = torch.cat([sinusoid_inp, sinusoid_inp], dim=-1)
 
