@@ -48,6 +48,40 @@ logger = logging.get_logger(__name__)
 
 _CONFIG_FOR_DOC = "LlamaConfig"
 
+class LlamaRotaryEmbedding(nn.Module):
+    def __init__(self, dim, max_position_embeddings=2048, base=10000, device=None):
+        super().__init__()
+
+        self.dim = dim
+        self.max_position_embeddings = max_position_embeddings
+        self.base = base
+        inv_freq = 1.0 / (self.base ** (torch.arange(0, self.dim, 2).float().to(device) / self.dim))
+        self.register_buffer("inv_freq", inv_freq, persistent=False)
+
+        # Build here to make `torch.jit.trace` work.
+        self._set_cos_sin_cache(
+            seq_len=max_position_embeddings, device=self.inv_freq.device, dtype=torch.get_default_dtype()
+        )
+
+    def _set_cos_sin_cache(self, seq_len, device, dtype):
+        self.max_seq_len_cached = seq_len
+        t = torch.arange(self.max_seq_len_cached, device=device, dtype=self.inv_freq.dtype)
+
+        freqs = torch.outer(t, self.inv_freq)  # (seq_len, dim//2)
+        # Different from paper, but it uses a different permutation in order to obtain the same calculation
+        emb = torch.cat((freqs, freqs), dim=-1)  # (seq_len, dim)
+        self.register_buffer("cos_cached", emb.cos().to(dtype), persistent=False)
+        self.register_buffer("sin_cached", emb.sin().to(dtype), persistent=False)
+
+    def forward(self, x, seq_len=None):
+        # x: [bs, num_attention_heads, seq_len, head_size]
+        if seq_len > self.max_seq_len_cached:
+            self._set_cos_sin_cache(seq_len=seq_len, device=x.device, dtype=x.dtype)
+
+        return (
+            self.cos_cached[:seq_len].to(dtype=x.dtype),
+            self.sin_cached[:seq_len].to(dtype=x.dtype),
+        )
 
 def set_openmoe_args(
     config: LlamaConfig,
@@ -157,75 +191,39 @@ def _expand_mask(mask: torch.Tensor, dtype: torch.dtype, tgt_len: Optional[int] 
     return inverted_mask.masked_fill(inverted_mask.to(torch.bool), torch.finfo(dtype).min)
 
 
-def generate_fixed_pos_embedding(features, length, min_timescale=1.0, max_timescale=10000.0):
-    """Generate Sin/Cos for Rotary Embeddings.
-
-    Args:
-      features: an integer
-      length: an integer
-      min_timescale: an optional float
-      max_timescale: an optional float
-
-    Returns:
-      output_sin: a float32 Tensor with shape [length, features]
-      output_cos: a float32 Tensor with shape [length, features]
-    """
-    fraction = torch.arange(0, features, 2, dtype=torch.float32).cpu() / features
-    timescale = min_timescale * (max_timescale / min_timescale) ** fraction
-    rotational_frequency = 1.0 / timescale
-
-    sinusoid_inp = torch.einsum("i,j->ij", torch.arange(length, dtype=torch.float32).cpu(), rotational_frequency)
-
-    sinusoid_inp = torch.cat([sinusoid_inp, sinusoid_inp], dim=-1)
-
-    return torch.sin(sinusoid_inp), torch.cos(sinusoid_inp)
-
-
-def apply_rotary_embedding(q, k, cos, sin, decode=False, rotary_index=None):
-    """Helper function to apply Rotary Embeddings."""
-    cos = cos.to(q.dtype)
-    sin = sin.to(q.dtype)
-
-    if len(k.shape) == 3:
-        # for multi query attention
-        k = k.unsqueeze(2)
-        multiquery = True
-    else:
-        multiquery = False
-
-    batch, qlen, qheads, d = q.shape
-    kbatch, klen, kheads, kd = k.shape
-    assert batch == kbatch, f"{batch} != {kbatch}"
-    assert d == kd, f"{d} != {kd}"
-    if decode and qlen == 1 and rotary_index is not None:
-        qcos = cos[rotary_index + 1, :]
-        qsin = sin[rotary_index + 1, :]
-        qcos = qcos.unsqueeze(2)
-        qsin = qsin.unsqueeze(2)
-        kcos, ksin = cos[:klen, :], sin[:klen, :]
-        kcos = kcos.unsqueeze(0).unsqueeze(2)
-        ksin = ksin.unsqueeze(0).unsqueeze(2)
-    else:
-        qcos, qsin = cos[:qlen, :], sin[:qlen, :]
-        qcos = qcos.unsqueeze(0).unsqueeze(2)
-        qsin = qsin.unsqueeze(0).unsqueeze(2)
-        kcos, ksin = qcos, qsin
-
-    out_q = (q * qcos) + (rotate_half(q) * qsin)
-    out_k = (k * kcos) + (rotate_half(k) * ksin)
-
-    if multiquery:
-        out_k = out_k.squeeze(2)
-
-    return out_q, out_k
-
-
 def rotate_half(x):
     """Rotates half the hidden dims of the input."""
     x1 = x[..., : x.shape[-1] // 2]
     x2 = x[..., x.shape[-1] // 2 :]
     return torch.cat((-x2, x1), dim=-1)
 
+
+def apply_rotary_pos_emb(q, k, cos, sin, position_ids, unsqueeze_dim=1):
+    """Applies Rotary Position Embedding to the query and key tensors.
+
+    Args:
+        q (`torch.Tensor`): The query tensor.
+        k (`torch.Tensor`): The key tensor.
+        cos (`torch.Tensor`): The cosine part of the rotary embedding.
+        sin (`torch.Tensor`): The sine part of the rotary embedding.
+        position_ids (`torch.Tensor`):
+            The position indices of the tokens corresponding to the query and key tensors. For example, this can be
+            used to pass offsetted position ids when working with a KV-cache.
+        unsqueeze_dim (`int`, *optional*, defaults to 1):
+            The 'unsqueeze_dim' argument specifies the dimension along which to unsqueeze cos[position_ids] and
+            sin[position_ids] so that they can be properly broadcasted to the dimensions of q and k. For example, note
+            that cos[position_ids] and sin[position_ids] have the shape [batch_size, seq_len, head_dim]. Then, if q and
+            k have the shape [batch_size, heads, seq_len, head_dim], then setting unsqueeze_dim=1 makes
+            cos[position_ids] and sin[position_ids] broadcastable to the shapes of q and k. Similarly, if q and k have
+            the shape [batch_size, seq_len, heads, head_dim], then set unsqueeze_dim=2.
+    Returns:
+        `tuple(torch.Tensor)` comprising of the query and key tensors rotated using the Rotary Position Embedding.
+    """
+    cos = cos[position_ids].unsqueeze(unsqueeze_dim)
+    sin = sin[position_ids].unsqueeze(unsqueeze_dim)
+    q_embed = (q * cos) + (rotate_half(q) * sin)
+    k_embed = (k * cos) + (rotate_half(k) * sin)
+    return q_embed, k_embed
 
 def SwiGLU(x):
     """Gated linear unit activation function.
@@ -304,8 +302,18 @@ class OpenMoeAttention(nn.Module):
         self.k_proj = nn.Linear(self.hidden_size, self.num_key_value_heads * self.head_dim, bias=False)
         self.v_proj = nn.Linear(self.hidden_size, self.num_key_value_heads * self.head_dim, bias=False)
         self.o_proj = nn.Linear(self.num_heads * self.head_dim, self.hidden_size, bias=False)
-        self.sin, self.cos = generate_fixed_pos_embedding(self.head_dim, self.max_position_embeddings, 1.0, 1e4)
-
+        self._init_rope()
+    
+    def _init_rope(self):
+        if self.config.rope_scaling is None:
+            self.rotary_emb = LlamaRotaryEmbedding(
+                self.head_dim,
+                max_position_embeddings=self.max_position_embeddings,
+                base=self.rope_theta,
+            )
+        else:
+            raise ValueError(f"Only Original RotaryEmbedding is supported yet")
+            
     def _shape(self, tensor: torch.Tensor, seq_len: int, bsz: int):
         return tensor.view(bsz, seq_len, self.num_heads, self.head_dim).transpose(1, 2).contiguous()
 
@@ -341,33 +349,21 @@ class OpenMoeAttention(nn.Module):
             key_states = self.k_proj(hidden_states)
             value_states = self.v_proj(hidden_states)
 
-        query_states = query_states.view(bsz, q_len, self.num_heads, self.head_dim).transpose(1, 2)
-        key_states = key_states.view(bsz, q_len, self.num_key_value_heads, self.head_dim).transpose(1, 2)
-        value_states = value_states.view(bsz, q_len, self.num_key_value_heads, self.head_dim).transpose(1, 2)
+        query_states = query_states.view(bsz, q_len, self.num_heads, self.head_dim).transpose(1, 2)  # (bsz, num_heads, q_len, head_dim)
+        key_states = key_states.view(bsz, q_len, self.num_key_value_heads, self.head_dim).transpose(1, 2)  # (bsz, num_heads, q_len, head_dim)
+        value_states = value_states.view(bsz, q_len, self.num_key_value_heads, self.head_dim).transpose(1, 2)  # (bsz, num_heads, q_len, head_dim)
 
-        kv_seq_len = key_states.shape[-2]
+        kv_seq_len = key_states.shape[-2]  
         if past_key_value is not None:
-            kv_seq_len += past_key_value[0].shape[-2]
-        # cos, sin = self.rotary_emb(value_states, seq_len=kv_seq_len)
-        # query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin, position_ids)
-        if past_key_value is not None:
+            kv_seq_len += past_key_value[0].shape[-2]  
             # reuse k, v, self_attention
-            key_states = torch.cat([past_key_value[0], key_states], dim=2)
-            value_states = torch.cat([past_key_value[1], value_states], dim=2)
+            key_states = torch.cat([past_key_value[0], key_states], dim=2)  # (bsz, num_heads, q_len+past_kv_len, head_dim)
+            value_states = torch.cat([past_key_value[1], value_states], dim=2)  # (bsz, num_heads, q_len+past_kv_len, head_dim)
 
         past_key_value = (key_states, value_states) if use_cache else None
 
-        query_states = query_states.transpose(1, 2)
-        key_states = key_states.transpose(1, 2)
-        max_length = max(query_states.shape[1], key_states.shape[1])
-        assert max_length <= self.sin.shape[0]
-        sin, cos = self.sin[:max_length], self.cos[:max_length]
-        # TODO: for inference, we can add emb kv into cache to avoid computation
-        query_states, key_states = apply_rotary_embedding(
-            query_states, key_states, cos, sin, decode=True if q_len == 1 else False, rotary_index=position_ids
-        )
-        query_states = query_states.transpose(1, 2)
-        key_states = key_states.transpose(1, 2)
+        cos, sin = self.rotary_emb(value_states, seq_len=kv_seq_len)
+        query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin, position_ids)
 
         # repeat k/v heads if n_kv_heads < n_heads
         key_states = repeat_kv(key_states, self.num_key_value_groups)
