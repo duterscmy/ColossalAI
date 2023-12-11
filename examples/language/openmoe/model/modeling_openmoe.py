@@ -297,6 +297,7 @@ class OpenMoeAttention(nn.Module):
         self.num_key_value_groups = self.num_heads // self.num_key_value_heads
         self.pretraining_tp = config.pretraining_tp
         self.max_position_embeddings = config.max_position_embeddings
+        self.rope_theta = config.rope_theta
 
         self.q_proj = nn.Linear(self.hidden_size, self.num_heads * self.head_dim, bias=False)
         self.k_proj = nn.Linear(self.hidden_size, self.num_key_value_heads * self.head_dim, bias=False)
