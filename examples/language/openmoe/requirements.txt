@@ -4,3 +4,4 @@ transformers==4.34.0
 sentencepiece==0.1.99
 datasets==2.14.7
 numpy==1.23.5
+flash_attn
