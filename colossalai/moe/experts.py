@@ -1,5 +1,6 @@
 import math
 from typing import Callable, Optional, Tuple
+import warnings
 
 import torch
 import torch.nn as nn
@@ -82,21 +83,17 @@ class MLPExperts(nn.Module):
                 set_moe_tensor_info(param, self.moe_info)
 
         # init param
-        # self.reset_parameters()  # will use cuda()
-        #  File "/content/ColossalAI/colossalai/moe/layers.py", line 92, in __init__
-        #   self.experts = MLPExperts(
-        # File "/content/ColossalAI/colossalai/moe/experts.py", line 85, in __init__
-        #   self.reset_parameters()
-        # File "/usr/local/lib/python3.10/dist-packages/torch/utils/_contextlib.py", line 115, in decorate_context
-        #   return func(*args, **kwargs)
-        # File "/content/ColossalAI/colossalai/moe/experts.py", line 93, in reset_parameters
-        #   seed_ctx = Randomizer(42).fork_rng(enable_cpu=True)
-        # File "/content/ColossalAI/colossalai/shardformer/layer/utils.py", line 112, in __init__
-        #   device_original_rng_state = get_rng_state()
-        # File "/content/ColossalAI/colossalai/utils/device.py", line 117, in get_rng_state
-        #   return _dispatch_device_func("get_rng_state", device)
-        # File "/content/ColossalAI/colossalai/utils/device.py", line 53, in _dispatch_device_func
-        #   raise RuntimeError("No device available")
+        try:
+            self.reset_parameters()
+        except RuntimeError as error:
+            # Running on CPU will raise Runtime Error Due to Randomizer
+            # Try code snippet below to reproduce the error:
+            # from colossalai.shardformer.layer.utils import Randomizer
+            # Randomizer(42).fork_rng(enable_cpu=True)
+            if "No device available" in str(error):
+                warnings.warn("Skipped parameters inititialization, because the current randomizer does not support CPU-based random initialization parameters.")
+            else:
+                raise
 
     @torch.no_grad()
     def reset_parameters(self):
@@ -104,7 +101,7 @@ class MLPExperts(nn.Module):
         if self.expert_parallel is not None:
             seed_ctx = Randomizer(get_ep_rank(self)).fork_rng(enable_cpu=True)
         else:
-            seed_ctx = Randomizer(42).fork_rng(enable_cpu=True)
+            seed_ctx = Randomizer(42).fork_rng(enable_cpu=True)  # TODO: raise error if run on CPU
         with seed_ctx:
             if self.gated:
                 torch.nn.init.normal_(self.wi_gate, std=math.sqrt(0.1 / self.hidden_size))
