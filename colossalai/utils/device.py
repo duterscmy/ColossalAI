@@ -50,7 +50,7 @@ def _dispatch_device_func(fn_name: str, *args, **kwargs):
     elif IS_NPU_AVAILABLE:
         return getattr(torch.npu, fn_name)(*args, **kwargs)
     else:
-        raise RuntimeError("No device available")
+        return getattr(torch.cuda, fn_name)(*args, **kwargs)
 
 
 # device semantics
