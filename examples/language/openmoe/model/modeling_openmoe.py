@@ -378,7 +378,11 @@ class OpenMoeAttention(nn.Module):
         value_states = repeat_kv(value_states, self.num_key_value_groups)
 
         if HAS_FLASH_ATTN and use_kernel:
-            from flash_attn import flash_attn_func
+            # from flash_attn import flash_attn_func
+            # If we use `from flash_attn import flash_attn_func` directly, 
+            # AutoModelForCausalLM.from_pretrained will treat flash_attn as a compulsory dependency and raise error if it cannot be found.
+            # Here is a workaround to avoid the error.
+            exec("from flash_attn import flash_attn_func")  
 
             query_states = query_states.transpose(1, 2)
             key_states = key_states.transpose(1, 2)
