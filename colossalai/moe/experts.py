@@ -83,17 +83,7 @@ class MLPExperts(nn.Module):
                 set_moe_tensor_info(param, self.moe_info)
 
         # init param
-        try:
-            self.reset_parameters()
-        except RuntimeError as error:
-            # Running on CPU will raise Runtime Error Due to Randomizer
-            # Try code snippet below to reproduce the error:
-            # from colossalai.shardformer.layer.utils import Randomizer
-            # Randomizer(42).fork_rng(enable_cpu=True)
-            if "No device available" in str(error):
-                warnings.warn("Skipped parameters inititialization, because the current randomizer does not support CPU-based random initialization parameters.")
-            else:
-                raise
+        self.reset_parameters()
 
     @torch.no_grad()
     def reset_parameters(self):
