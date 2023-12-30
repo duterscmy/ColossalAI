@@ -310,8 +310,8 @@ class OpenMoeAttention(nn.Module):
     
         sinusoid_inp = torch.cat([sinusoid_inp, sinusoid_inp], dim=-1)
 
-        self.register_buffer('sin', torch.sin(sinusoid_inp))
-        self.register_buffer('cos', torch.cos(sinusoid_inp))
+        self.register_buffer('sin', torch.sin(sinusoid_inp), persistent=False)  # persistent=False --> buffer won't appear in the state_dict
+        self.register_buffer('cos', torch.cos(sinusoid_inp), persistent=False)
     
     def forward(
         self,
