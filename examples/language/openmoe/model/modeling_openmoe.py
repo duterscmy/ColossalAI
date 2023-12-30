@@ -157,30 +157,6 @@ def _expand_mask(mask: torch.Tensor, dtype: torch.dtype, tgt_len: Optional[int] 
     return inverted_mask.masked_fill(inverted_mask.to(torch.bool), torch.finfo(dtype).min)
 
 
-def generate_fixed_pos_embedding(features, length, min_timescale=1.0, max_timescale=10000.0):
-    """Generate Sin/Cos for Rotary Embeddings.
-
-    Args:
-      features: an integer
-      length: an integer
-      min_timescale: an optional float
-      max_timescale: an optional float
-
-    Returns:
-      output_sin: a float32 Tensor with shape [length, features]
-      output_cos: a float32 Tensor with shape [length, features]
-    """
-    fraction = torch.arange(0, features, 2, dtype=torch.float32) / features
-    timescale = min_timescale * (max_timescale / min_timescale) ** fraction
-    rotational_frequency = 1.0 / timescale
-
-    sinusoid_inp = torch.einsum("i,j->ij", torch.arange(length, dtype=torch.float32), rotational_frequency)
-
-    sinusoid_inp = torch.cat([sinusoid_inp, sinusoid_inp], dim=-1)
-
-    return torch.sin(sinusoid_inp), torch.cos(sinusoid_inp)
-
-
 def apply_rotary_embedding(q, k, cos, sin, decode=False, rotary_index=None):  
     # q:  (bs, q_len, num_heads, head_dim)
     # k:  (bs, q_len [+past_kv_len], num_heads, head_dim)
@@ -307,13 +283,36 @@ class OpenMoeAttention(nn.Module):
         self.k_proj = nn.Linear(self.hidden_size, self.num_key_value_heads * self.head_dim, bias=False)
         self.v_proj = nn.Linear(self.hidden_size, self.num_key_value_heads * self.head_dim, bias=False)
         self.o_proj = nn.Linear(self.num_heads * self.head_dim, self.hidden_size, bias=False)
-        sin, cos = generate_fixed_pos_embedding(self.head_dim, self.max_position_embeddings, 1.0, 1e4)
-        self.register_buffer('sin', sin)
-        self.register_buffer('cos', cos)
+        self.generate_fixed_pos_embedding(self.head_dim, self.max_position_embeddings, 1.0, 1e4)
+        
 
     def _shape(self, tensor: torch.Tensor, seq_len: int, bsz: int):
         return tensor.view(bsz, seq_len, self.num_heads, self.head_dim).transpose(1, 2).contiguous()
 
+    def generate_fixed_pos_embedding(self, features, length, min_timescale=1.0, max_timescale=10000.0):
+        """Generate Sin/Cos for Rotary Embeddings.
+    
+        Args:
+          features: an integer
+          length: an integer
+          min_timescale: an optional float
+          max_timescale: an optional float
+    
+        Returns:
+          output_sin: a float32 Tensor with shape [length, features]
+          output_cos: a float32 Tensor with shape [length, features]
+        """
+        fraction = torch.arange(0, features, 2, dtype=torch.float32) / features
+        timescale = min_timescale * (max_timescale / min_timescale) ** fraction
+        rotational_frequency = 1.0 / timescale
+    
+        sinusoid_inp = torch.einsum("i,j->ij", torch.arange(length, dtype=torch.float32), rotational_frequency)
+    
+        sinusoid_inp = torch.cat([sinusoid_inp, sinusoid_inp], dim=-1)
+
+        self.register_buffer('sin', torch.sin(sinusoid_inp))
+        self.register_buffer('cos', torch.cos(sinusoid_inp))
+    
     def forward(
         self,
         hidden_states: torch.Tensor,
