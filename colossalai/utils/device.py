@@ -54,7 +54,7 @@ def _dispatch_device_func(fn_name: str, *args, **kwargs):
             device = "npu"
         else:
             device = "cpu"
-    else:  # if device is specified, device will be automatically detected
+    else:  # if device is not specified, device will be automatically detected
         if torch.cuda.is_available(): 
             device = "cuda"
         elif IS_NPU_AVAILABLE:
