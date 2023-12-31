@@ -2,8 +2,11 @@
   "architectures": [
     "OpenMoeForCausalLM"
   ],
+  "auto_map": {
+    "AutoModelForCausalLM": "modeling_openmoe.OpenMoeForCausalLM"
+  },
   "attention_bias": false,
-  "bos_token_id": 2,
+  "bos_token_id": 0,
   "dropout_rate": 0.0,
   "enable_comm_overlap": false,
   "enable_hierarchical_alltoall": false,
@@ -16,6 +19,7 @@
   "hidden_size": 2048,
   "initializer_range": 0.02,
   "intermediate_size": 8192,
+  "label_smoothing": 0.001,
   "layer_norm_epsilon": 1e-06,
   "load_balance_beam_width": 8,
   "load_balance_group_swap_factor": 0.4,
@@ -33,14 +37,18 @@
   "rms_norm_eps": 1e-06,
   "rope_scaling": null,
   "rope_theta": 10000.0,
+  "router_aux_loss_factor": 0.01,
   "router_capacity_factor_eval": 2.0,
   "router_capacity_factor_train": 1.25,
   "router_drop_tks": true,
   "router_min_capacity": 4,
   "router_noisy_policy": null,
   "router_topk": 2,
+  "router_z_loss_factor": 0.0001,
   "tie_word_embeddings": false,
+  "torch_dtype": "float32",
   "transformers_version": "4.34.0",
   "use_cache": true,
-  "vocab_size": 256384
+  "vocab_size": 256384,
+  "z_loss_factor": 0.01
 }
