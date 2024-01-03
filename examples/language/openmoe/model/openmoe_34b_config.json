@@ -27,7 +27,7 @@
   "max_position_embeddings": 2048,
   "mlp_gated": true,
   "model_type": "llama",
-  "moe_layer_interval": 3,
+  "moe_layer_interval": 4,
   "num_attention_heads": 24,
   "num_experts": 32,
   "num_hidden_layers": 32,
