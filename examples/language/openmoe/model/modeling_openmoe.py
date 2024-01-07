@@ -27,7 +27,11 @@ import torch.utils.checkpoint
 from torch import nn
 from transformers.modeling_outputs import BaseModelOutputWithPast, CausalLMOutputWithPast
 from transformers.modeling_utils import PreTrainedModel
-from transformers.models.llama.modeling_llama import LlamaConfig, LlamaRMSNorm
+from transformers.models.llama.configuration_llama import LlamaConfig
+# ========= Disable Flash Attn =============
+# from .llama_attn import LlamaAttention
+# ========= Disable Flash Attn =============
+
 from transformers.utils import (
     add_start_docstrings,
     add_start_docstrings_to_model_forward,
@@ -40,6 +44,8 @@ from colossalai.kernel.triton.llama_act_combine_kernel import HAS_TRITON
 from colossalai.moe.layers import SparseMLP
 from colossalai.moe.manager import MOE_MANAGER
 from colossalai.moe.utils import get_activation, set_moe_args
+
+
 
 if HAS_TRITON:
     from colossalai.kernel.triton.llama_act_combine_kernel import LlamaActCombine
@@ -205,6 +211,21 @@ def rotate_half(x):
     x2 = x[..., x.shape[-1] // 2 :]
     return torch.cat((-x2, x1), dim=-1)
 
+class LlamaRMSNorm(nn.Module):
+    def __init__(self, hidden_size, eps=1e-6):
+        """
+        LlamaRMSNorm is equivalent to T5LayerNorm
+        """
+        super().__init__()
+        self.weight = nn.Parameter(torch.ones(hidden_size))
+        self.variance_epsilon = eps
+
+    def forward(self, hidden_states):
+        input_dtype = hidden_states.dtype
+        hidden_states = hidden_states.to(torch.float32)
+        variance = hidden_states.pow(2).mean(-1, keepdim=True)
+        hidden_states = hidden_states * torch.rsqrt(variance + self.variance_epsilon)
+        return self.weight * hidden_states.to(input_dtype)
 
 def SwiGLU(x):
     """Gated linear unit activation function.
@@ -284,6 +305,7 @@ class OpenMoeAttention(nn.Module):
         self.v_proj = nn.Linear(self.hidden_size, self.num_key_value_heads * self.head_dim, bias=False)
         self.o_proj = nn.Linear(self.num_heads * self.head_dim, self.hidden_size, bias=False)
         self.generate_fixed_pos_embedding(self.head_dim, self.max_position_embeddings, 1.0, 1e4)
+        self.use_kernel = config.enable_kernel
         
 
     def _shape(self, tensor: torch.Tensor, seq_len: int, bsz: int):
@@ -321,7 +343,6 @@ class OpenMoeAttention(nn.Module):
         past_key_value: Optional[Tuple[torch.Tensor]] = None,
         output_attentions: bool = False,
         use_cache: bool = False,
-        use_kernel: bool = True,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
         bsz, q_len, _ = hidden_states.size()
 
@@ -377,7 +398,7 @@ class OpenMoeAttention(nn.Module):
         key_states = repeat_kv(key_states, self.num_key_value_groups)
         value_states = repeat_kv(value_states, self.num_key_value_groups)
 
-        if HAS_FLASH_ATTN and use_kernel:
+        if HAS_FLASH_ATTN and self.use_kernel:
             # from flash_attn import flash_attn_func
             # If we use `from flash_attn import flash_attn_func` directly, 
             # AutoModelForCausalLM.from_pretrained will treat flash_attn as a compulsory dependency and raise error if it cannot be found.
@@ -439,7 +460,8 @@ class OpenMoeDecoderLayer(nn.Module):
         super().__init__()
         self.hidden_size = config.hidden_size
         self.moe = moe
-        self.self_attn = OpenMoeAttention(config=config)
+        self.self_attn = OpenMoeAttention(config=config)  
+#         self.self_attn = LlamaAttention(config=config)  # TODO: introduce LLaMA Positional Encoding
         self.input_layernorm = LlamaRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
         self.post_attention_layernorm = LlamaRMSNorm(config.hidden_size, eps=config.rms_norm_eps)
         if self.moe:
@@ -553,7 +575,7 @@ class OpenMoePreTrainedModel(PreTrainedModel):
     config_class = LlamaConfig
     base_model_prefix = "model"
     supports_gradient_checkpointing = True
-    _no_split_modules = ["LlamaDecoderLayer"]
+    _no_split_modules = ["OpenMoeDecoderLayer"]
     _skip_keys_device_placement = "past_key_values"
 
     def _init_weights(self, module):
