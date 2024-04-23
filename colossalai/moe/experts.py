@@ -1,6 +1,5 @@
 import math
 from typing import Callable, Optional, Tuple
-import warnings
 
 import torch
 import torch.nn as nn
@@ -50,6 +49,7 @@ class MLPExperts(nn.Module):
         self.use_kernel = use_kernel
         self.hidden_size = hidden_size
         self.intermediate_size = intermediate_size
+        self.num_experts = num_experts
 
         # get expert parallel info
         if expert_parallel is not None:
@@ -68,14 +68,24 @@ class MLPExperts(nn.Module):
             self.ep_size = 1
 
         if gated:
-            self.wi_gate = nn.Parameter(torch.empty(num_experts, hidden_size, intermediate_size * 2))
+            print("if gated=True, activation={}".format(activation))
+            self.wi_gate = nn.Parameter(
+                torch.empty(
+                    num_experts, hidden_size, intermediate_size * 2 if activation == "swiglu" else intermediate_size
+                )
+            )
+            
             self.wi_up = nn.Parameter(torch.empty(num_experts, hidden_size, intermediate_size))
+            print("wi_gated shape={}".format(self.wi_gate.size()))
+            print("wi shape={}".format(self.wi_up.size()))
         else:
-            self.wi = nn.Parameter(torch.empty(num_experts, hidden_size, intermediate_size))
-        self.wo = nn.Parameter(torch.empty(num_experts, intermediate_size, hidden_size))
-
+            self.wi = nn.Parameter(torch.empty(num_experts, hidden_size, intermediate_size))  # 放大参数
+            print("wi shape={}".format(self.wi.size()))
+        self.wo = nn.Parameter(torch.empty(num_experts, intermediate_size, hidden_size))  # 缩放参数
+        
+        print("wo shape={}".format(self.wo.size()))
         self.act_name = activation
-        self.act = get_activation(activation)
+        self.act = get_activation(activation)  # 激活
         self.drop = nn.Dropout(p=drop_rate)
 
         if expert_parallel is not None:
@@ -91,7 +101,7 @@ class MLPExperts(nn.Module):
         if self.expert_parallel is not None:
             seed_ctx = Randomizer(get_ep_rank(self)).fork_rng(enable_cpu=True)
         else:
-            seed_ctx = Randomizer(42).fork_rng(enable_cpu=True)  # TODO: raise error if run on CPU
+            seed_ctx = Randomizer(42).fork_rng(enable_cpu=True)
         with seed_ctx:
             if self.gated:
                 torch.nn.init.normal_(self.wi_gate, std=math.sqrt(0.1 / self.hidden_size))
@@ -137,9 +147,12 @@ class MLPExperts(nn.Module):
         if self.gated:
             x_gate = [torch.mm(x[i], self.wi_gate[param_slice][i]) for i in range(e)]
             x_up = [torch.mm(x[i], self.wi_up[param_slice][i]) for i in range(e)]
+            print("foward self.act_name={}".format(self.act_name))
             if self.use_kernel and HAS_TRITON and self.act_name == "swiglu":
+                print("self.gated & using LlamaActCombine")
                 x = [LlamaActCombine.apply(x_gate[i], x_up[i]) for i in range(e)]
             else:
+                print("self.gated &using self.act")
                 x = [self.act(x_gate[i]) * x_up[i] for i in range(e)]
         else:
             x = [torch.mm(x[i], self.wi[param_slice][i]) for i in range(e)]
@@ -155,4 +168,43 @@ class MLPExperts(nn.Module):
         x = x.reshape(inshape)
         x = x.transpose(0, 1).contiguous()
         x = MoeOutGradScaler.apply(x, self.ep_size)
+        return x
+    
+    def forward_pure(
+        self,
+        x: torch.Tensor,
+    ) -> torch.Tensor:
+        """
+        forward: hidden_size --> intermediate_size --> hidden_size
+        得到输入张量经过所有expert的输出
+
+        Args:
+            x (torch.Tensor): The input tensor of shape (num_tokens, hidden_size)
+
+        Returns:
+            torch.Tensor: The output tensor of shape (num_tokens, num_experts, hidden_size)
+        """
+        x = MoeInGradScaler.apply(x, self.ep_size) # num_token * h
+        # print("x size {}".format(x.size()))
+        x_copy = x.unsqueeze(0).repeat(self.num_experts, 1, 1) # num_expert * num_token * h
+        # print("x copy size {}".format(x_copy.size()))
+
+        # x= x.transpose(1, 2).contiguous().view(x.size()[0], x.size()[2], x.size()[1]) # num_expert  * h * num_token 
+        x = torch.matmul(x_copy, self.wi_up.data) # num_expert * num_token * ffn
+        # print("after enlarge {}".format(x.size()))
+        # print(self.act)
+        # x = self.act(x)
+        x_gate = torch.matmul(x_copy, self.wi_gate.data)
+        # print("x gate {}".format(x_gate.size()))
+        # x = LlamaActCombine.apply(x_gate, x)
+        x = self.act(x_gate) * x
+        # print("after activate {}".format(x.size()))
+        # x = [self.drop(x[i]) for i in range(e)]
+        x = torch.matmul(x, self.wo.data) # num_expert * num_token * h
+        # print("after entail {}".format(x.size()))
+
+
+        # x = x.transpose(0, 1).contiguous() # num_expert * num_token * h
+        x = MoeOutGradScaler.apply(x, self.ep_size)
+        # print("after scale {}".format(x.size()))
         return x

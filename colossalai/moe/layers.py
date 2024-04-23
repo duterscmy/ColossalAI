@@ -12,7 +12,7 @@ from colossalai.moe.manager import MOE_MANAGER
 from colossalai.moe.routers import MoeRouter, get_router_cls
 from colossalai.moe.utils import create_ep_hierarchical_group, get_noise_generator
 from colossalai.tensor.moe_tensor.api import get_dp_group, get_ep_group, get_ep_group_ranks, get_ep_size
-
+from colossalai.moe.expert_idx import expert_idxs
 
 class SparseMLP(nn.Module):
     """A class for users to create MoE modules in their models.
@@ -138,6 +138,45 @@ class SparseMLP(nn.Module):
         torch.nn.init.normal_(self.gate_weight, std=math.sqrt(0.1 / self.hidden_size))
 
     def forward(self, inputs: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            inputs (torch.Tensor): The input tensor of shape (batch_size, seq_len, hidden_size)
+            expert_idxs: specific some expert for inference with equal weights, like: ‘0:1:2’
+
+        Returns:
+            torch.Tensor: The output tensor of shape (batch_size, seq_len, hidden_size)
+        """
+        # reshape the input tokens
+        tokens = inputs.reshape(-1, self.hidden_size)
+
+        # expert_output: (num_expert, -1, self.hidden_size)
+        expert_output = self.experts.forward_pure(tokens)
+        # print("expert output size {}".format(expert_output.size()))
+
+        # weighted output: (-1, self.hidden_size)
+        # expert_idxs = list(map(int, expert_idxs.split(":")))
+        expert_idxs_tmp = expert_idxs[-1]
+        index_tensor = torch.tensor(expert_idxs_tmp)
+        print("expert idxs {}".format(index_tensor))
+
+        selected_expert_output = torch.index_select(expert_output, 0, index_tensor)
+        # print("selected expert output size{}".format(selected_expert_output.size()))
+        expert_output = torch.mean(selected_expert_output, dim=0)
+        # print("mean expert output size {}".format(expert_output.size()))
+        # if self.enable_kernel:
+        #     expert_output = expert_output.reshape(-1, self.hidden_size)
+        #     ans = MoeCombine.apply(expert_output, *route_result_list)
+        # else:
+        #     combine_weights = route_result_list[0].type_as(inputs)
+        #     combine_weights = combine_weights.view(combine_weights.shape[0], -1)
+        #     expert_output = expert_output.view(-1, expert_output.shape[-1])
+        #     ans = torch.matmul(combine_weights, expert_output)
+
+        expert_output = expert_output.reshape(inputs.shape)
+        # print("final expert output size {}".format(expert_output.size()))
+        return expert_output
+
+    def forward_x(self, inputs: torch.Tensor) -> torch.Tensor:
         """
         Args:
             inputs (torch.Tensor): The input tensor of shape (batch_size, seq_len, hidden_size)
