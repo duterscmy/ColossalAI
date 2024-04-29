@@ -15,7 +15,7 @@ parser.add_argument("--num-expert", type=int, default=32, help="模型专家的�
 parser.add_argument("--batch-size", type=int, default=1, help="并行解码的样本数量")
 parser.add_argument("--max-new-tokens", type=int, default=32, help="解码结果的最大长度")
 parser.add_argument("--model-name", type=str, default="OrionZheng/openmoe-8b-chat",
-                    choices=["OrionZheng/openmoe-8b-chat", "OrionZheng/openmoe-8b-base",
+                    choices=["OrionZheng/openmoe-8b-chat", "OrionZheng/openmoe-8b",
                              "OrionZheng/openmoe-34b-200B", "OrionZheng/openmoe-base",],
                     help="模型在huggingface上的命名")
 parser.add_argument("--input", default="./dataset/wmt16-en-ro.parquet",
@@ -38,7 +38,6 @@ if not os.path.exists(output_path):
 
 dataset = pd.read_parquet(args.input, engine='fastparquet')
 en_texts = list(dataset["translation.en"])
-
 prompt = "translate English to Romanian:"
 
 name_to_translations = fixed_expert_decode(

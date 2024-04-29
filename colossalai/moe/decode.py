@@ -184,7 +184,7 @@ parser.add_argument("--num-fixed-expert", type=int, default=1, help="推理时�
 parser.add_argument("--num-group", type=int, default=4, help="随机选择专家的次数")
 parser.add_argument("--num-expert", type=int, default=32, help="模型专家的总数")
 parser.add_argument("--batch-size", type=int, default=4, help="并行解码的样本数量")
-parser.add_argument("--input", default="/content/ColossalAI/colossalai/moe/questions.jsonl",
+parser.add_argument("--input", default="./dataset/questions.jsonl",
                      help="MTBench数据集路径")
 parser.add_argument("--output-dir", default="./mt_bench_output",
                      help="结果路径")
@@ -211,58 +211,60 @@ if not os.path.exists(output_path):
     os.makedirs(output_path)
 
 for group_idx in range(num_group):  # 随机选择n次专家
-    random_numbers = random.sample(range(num_expert), num_fixed_expert)
-    expert_idxs.append(random_numbers)
-    print("using expert: {}".format(random_numbers))
+    for _num_expert in range(num_expert):
+        _num_expert = _num_expert + 1
+        random_numbers = random.sample(range(_num_expert), num_fixed_expert)
+        expert_idxs.append(random_numbers)
+        print("using expert: {}".format(random_numbers))
 
-    expert_idxs_str = ";".join(list(map(str, random_numbers)))
-    model_id = "{}_expert{}".format(model_name, expert_idxs_str)
-    output_filename = "{}.jsonl".format(model_id)
-    output_filename = os.path.join(output_path, output_filename)
+        expert_idxs_str = ";".join(list(map(str, random_numbers)))
+        model_id = "{}_expert{}".format(model_name, expert_idxs_str)
+        output_filename = "{}.jsonl".format(model_id)
+        output_filename = os.path.join(output_path, output_filename)
 
-    outputs = []
-    for sample_idx in range(0, len(questions), batch_size):
-        end_sample_idx = min(len(questions), sample_idx + batch_size)
-        input_strs = raw_questions[sample_idx: end_sample_idx]
+        outputs = []
+        for sample_idx in range(0, len(questions), batch_size):
+            end_sample_idx = min(len(questions), sample_idx + batch_size)
+            input_strs = raw_questions[sample_idx: end_sample_idx]
 
-        final_input_strs = []
-        for input_str in input_strs:
-            if prompt_template == "openmoe":
-                SYS_LLAMA = "You are a helpful, respectful and honest assistant. Always answer as helpfully as possible, while being safe. Your answers should not include any harmful, unethical, racist, sexist, toxic, dangerous, or illegal content. Please ensure that your responses are socially unbiased and positive in nature."
-                input_str = apply_llama_chat_template(tokenizer,
-                                                    [(input_str, 'user')],
-                                                    sys_prompt="")
-            final_input_strs.append(input_str)
-        print("=========== The Actual Input =============")
-        [print(i) for i in final_input_strs]
-        output_ids, output_txts = inference(model, tokenizer, final_input_strs, gen_kwargs[gen_strategy],
-                                            verbose=debug_verbose)
+            final_input_strs = []
+            for input_str in input_strs:
+                if prompt_template == "openmoe":
+                    SYS_LLAMA = "You are a helpful, respectful and honest assistant. Always answer as helpfully as possible, while being safe. Your answers should not include any harmful, unethical, racist, sexist, toxic, dangerous, or illegal content. Please ensure that your responses are socially unbiased and positive in nature."
+                    input_str = apply_llama_chat_template(tokenizer,
+                                                        [(input_str, 'user')],
+                                                        sys_prompt="")
+                final_input_strs.append(input_str)
+            print("=========== The Actual Input =============")
+            [print(i) for i in final_input_strs]
+            output_ids, output_txts = inference(model, tokenizer, final_input_strs, gen_kwargs[gen_strategy],
+                                                verbose=debug_verbose)
 
-        # print(output_txts)
-        print("============== Output Text ===============")
-        for i, output_txt in enumerate(output_txts):
-            print(f"sample {i}: {final_input_strs[i]}")
-            output = output_txt.split('</s>')[0]
-            print("output: {}".format(output))
-            outputs.append(output)
+            # print(output_txts)
+            print("============== Output Text ===============")
+            for i, output_txt in enumerate(output_txts):
+                print(f"sample {i}: {final_input_strs[i]}")
+                output = output_txt.split('</s>')[0]
+                print("output: {}".format(output))
+                outputs.append(output)
 
-    assert len(outputs) == len(questions)
-    def pack_answers(questions, outputs):
-        res = []
-        for question, output in zip(questions, outputs):
-            ans_json = {
-                "question_id": question["question_id"],
-                "answer_id": shortuuid.uuid(),
-                "model_id": model_id,
-                "choices": [{"index": 0, "turns": [output]}],
-                "tstamp": time.time(),
-            }
-            res.append(ans_json)
-        return res
-    answers = pack_answers(questions, outputs)
+        assert len(outputs) == len(questions)
+        def pack_answers(questions, outputs):
+            res = []
+            for question, output in zip(questions, outputs):
+                ans_json = {
+                    "question_id": question["question_id"],
+                    "answer_id": shortuuid.uuid(),
+                    "model_id": model_id,
+                    "choices": [{"index": 0, "turns": [output]}],
+                    "tstamp": time.time(),
+                }
+                res.append(ans_json)
+            return res
+        answers = pack_answers(questions, outputs)
 
-    with open(output_filename, 'w') as fp:
-        for a in answers:
-            fp.write(json.dumps(a)+'\n')
+        with open(output_filename, 'w') as fp:
+            for a in answers:
+                fp.write(json.dumps(a)+'\n')
 
 

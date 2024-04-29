@@ -8,7 +8,6 @@ from absl import flags
 import random
 import os
 import json
-import shortuuid
 import time
 
 from colossalai.moe.expert_idx import expert_idxs
@@ -102,7 +101,7 @@ def apply_llama_chat_template(tokenizer, input_strs, sys_prompt):
 def fixed_expert_decode(input_texts, prompt="", model_name="OrionZheng/openmoe-8b-chat", num_fixed_expert=4, num_group=4, num_expert=32,
                         batch_size=4, max_new_tokens=32):
     '''固定选择n个专家来得到推理结果'''
-
+    # print(input_texts[:5])
     # @markdown 1. Path to the checkpoint repo
     pytorch_checkpoint_path = model_name  # @param {type:"string"}
     # pytorch_checkpoint_path = "OrionZheng/openmoe-base"
@@ -192,37 +191,41 @@ def fixed_expert_decode(input_texts, prompt="", model_name="OrionZheng/openmoe-8
 
     name_to_outputs = {}
     for group_idx in range(num_group):  # 随机选择n次专家
-        random_numbers = random.sample(range(num_expert), num_fixed_expert)
-        expert_idxs.append(random_numbers)
-        print("using expert: {}".format(random_numbers))
+        for _num_expert in range(num_expert):
+            _num_expert += 1
+            random_numbers = random.sample(range(_num_expert), num_fixed_expert)
+            expert_idxs.append(random_numbers)
+            print("using expert: {}".format(random_numbers))
 
-        expert_idxs_str = ";".join(list(map(str, random_numbers)))
-        model_id = "{}_expert{}".format(model_name, expert_idxs_str)
+            expert_idxs_str = ";".join(list(map(str, random_numbers)))
+            model_id = "{}_expert{}".format(model_name, expert_idxs_str)
 
-        outputs = []
-        for sample_idx in range(0, len(input_texts), batch_size):
-            end_sample_idx = min(len(input_texts), sample_idx + batch_size)
-            input_strs = input_texts[sample_idx: end_sample_idx]
+            outputs = []
+            for sample_idx in range(0, len(input_texts), batch_size):
+                end_sample_idx = min(len(input_texts), sample_idx + batch_size)
+                input_strs = input_texts[sample_idx: end_sample_idx]
 
-            final_input_strs = []
-            for input_str in input_strs:
-                # SYS_LLAMA = "You are a helpful, respectful and honest assistant. Always answer as helpfully as possible, while being safe. Your answers should not include any harmful, unethical, racist, sexist, toxic, dangerous, or illegal content. Please ensure that your responses are socially unbiased and positive in nature."
-                input_str = apply_llama_chat_template(tokenizer,
-                                                      [(input_str, 'user')],
-                                                      sys_prompt=prompt)
-                final_input_strs.append(input_str)
-            # print("=========== The Actual Input =============")
-            # [print(i) for i in final_input_strs]
-            output_ids, output_txts = inference(model, tokenizer, final_input_strs, gen_kwargs[gen_strategy],
-                                                verbose=debug_verbose)
+                final_input_strs = []
+                for input_str in input_strs:
+                    # print("input str: {}".format(input_str))
+                    # SYS_LLAMA = "You are a helpful, respectful and honest assistant. Always answer as helpfully as possible, while being safe. Your answers should not include any harmful, unethical, racist, sexist, toxic, dangerous, or illegal content. Please ensure that your responses are socially unbiased and positive in nature."
+                    # input_str = apply_llama_chat_template(tokenizer,
+                    #                                       [(input_str, 'user')],
+                    #                                       sys_prompt=prompt)
+                    input_str = prompt + input_str
+                    final_input_strs.append(input_str)
+                # print("=========== The Actual Input =============")
+                # [print(i) for i in final_input_strs]
+                output_ids, output_txts = inference(model, tokenizer, final_input_strs, gen_kwargs[gen_strategy],
+                                                    verbose=debug_verbose)
 
-            # print(output_txts)
-            print("============== Output Text ===============")
-            for i, output_txt in enumerate(output_txts):
-                print(f"sample {i}: {final_input_strs[i]}")
-                output = output_txt.split('</s>')[0]
-                print("output: {}\n".format(output))
-                outputs.append(output)
-        assert len(outputs) == len(input_texts)
-        name_to_outputs[model_id] == outputs
-    return name_to_outputs
+                # print(output_txts)
+                print("============== Output Text ===============")
+                for i, output_txt in enumerate(output_txts):
+                    print(f"sample {i}: {final_input_strs[i]}")
+                    output = output_txt.split('</s>')[0]
+                    print("output: {}\n".format(output))
+                    outputs.append(output)
+            assert len(outputs) == len(input_texts)
+            name_to_outputs[model_id] == outputs
+        return name_to_outputs

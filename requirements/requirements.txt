@@ -16,3 +16,5 @@ ray
 sentencepiece
 google
 protobuf
+fastparquet
+shortuuid
