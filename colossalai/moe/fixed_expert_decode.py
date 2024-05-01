@@ -191,9 +191,9 @@ def fixed_expert_decode(input_texts, prompt="", model_name="OrionZheng/openmoe-8
 
     name_to_outputs = {}
     for group_idx in range(num_group):  # 随机选择n次专家
-        for _num_expert in range(num_expert):
+        for _num_expert in range(num_fixed_expert):
             _num_expert += 1
-            random_numbers = random.sample(range(_num_expert), num_fixed_expert)
+            random_numbers = random.sample(range(num_expert), _num_expert)
             expert_idxs.append(random_numbers)
             print("using expert: {}".format(random_numbers))
 
