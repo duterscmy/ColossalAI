@@ -158,7 +158,6 @@ class SparseMLP(nn.Module):
         expert_idxs_tmp = expert_idxs[-1]
         index_tensor = torch.tensor(expert_idxs_tmp).to(expert_output.device)
         print("expert idxs {}".format(index_tensor))
-
         selected_expert_output = torch.index_select(expert_output, 0, index_tensor)
         # print("selected expert output size{}".format(selected_expert_output.size()))
         expert_output = torch.mean(selected_expert_output, dim=0)

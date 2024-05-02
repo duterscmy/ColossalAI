@@ -110,7 +110,7 @@ cpu_memory = '50GiB' #@param ["50GiB"] {allow-input: true}
 # @markdown - The CPU runtime only supports inference in float32 precision
 # @markdown - The `bfloat16` is only available on A100 Colab runtime
 # @markdown - Please use float32/bfloat16 for inference. We observed issues with the model output when running in float16, which may be due to underflow caused by our large vocabulary size.
-model_dtype = 'float32' #@param ["float32", "bfloat16"]
+model_dtype = 'bfloat16' #@param ["float32", "bfloat16"]
 #@markdown (Not recommended, very slow) Offload model weights to CPU memory if GPU's is insufficient, then offload to disk if CPU memory is insufficient.
 offload = False #@param {type:"boolean"}
 
