@@ -12,7 +12,7 @@ from colossalai.moe.manager import MOE_MANAGER
 from colossalai.moe.routers import MoeRouter, get_router_cls
 from colossalai.moe.utils import create_ep_hierarchical_group, get_noise_generator
 from colossalai.tensor.moe_tensor.api import get_dp_group, get_ep_group, get_ep_group_ranks, get_ep_size
-from colossalai.moe.expert_idx import expert_idxs
+from colossalai.moe.expert_idx import expert_idxs_list, global_layer_list, prune_layer_list, layer_num_list
 
 class SparseMLP(nn.Module):
     """A class for users to create MoE modules in their models.
@@ -137,7 +137,26 @@ class SparseMLP(nn.Module):
     def reset_parameters(self):
         torch.nn.init.normal_(self.gate_weight, std=math.sqrt(0.1 / self.hidden_size))
 
-    def forward(self, inputs: torch.Tensor) -> torch.Tensor:
+    def forward(self, inputs):
+        _global_layer = global_layer_list[-1]  # 整个推理脚本中调用layer对象的次数
+        _pune_layer = prune_layer_list[-1]  # 进行剪枝的层索引
+        _layer_num = layer_num_list[-1]  # 模型的层数
+        global_layer_list[:] = []
+        if _global_layer == _layer_num-1:
+            global_layer_list.append(0)
+        else:
+            global_layer_list.append(_global_layer + 1)
+        
+
+        if _global_layer % _layer_num == _pune_layer:
+            print("layer_num {} current_layer {}, use PUNE layer".format(_layer_num, _global_layer))
+            output = self.forward_pune(inputs)
+        else:
+            print("layer_num {} current_layer {}, use ROUTE layer".format(_layer_num, _global_layer))
+            output = self.forward_route(inputs)
+        return output
+
+    def forward_pune(self, inputs: torch.Tensor) -> torch.Tensor:
         """
         Args:
             inputs (torch.Tensor): The input tensor of shape (batch_size, seq_len, hidden_size)
@@ -155,27 +174,19 @@ class SparseMLP(nn.Module):
 
         # weighted output: (-1, self.hidden_size)
         # expert_idxs = list(map(int, expert_idxs.split(":")))
-        expert_idxs_tmp = expert_idxs[-1]
+        expert_idxs_tmp = expert_idxs_list[-1]
         index_tensor = torch.tensor(expert_idxs_tmp).to(expert_output.device)
         print("expert idxs {}".format(index_tensor))
         selected_expert_output = torch.index_select(expert_output, 0, index_tensor)
         # print("selected expert output size{}".format(selected_expert_output.size()))
         expert_output = torch.mean(selected_expert_output, dim=0)
         # print("mean expert output size {}".format(expert_output.size()))
-        # if self.enable_kernel:
-        #     expert_output = expert_output.reshape(-1, self.hidden_size)
-        #     ans = MoeCombine.apply(expert_output, *route_result_list)
-        # else:
-        #     combine_weights = route_result_list[0].type_as(inputs)
-        #     combine_weights = combine_weights.view(combine_weights.shape[0], -1)
-        #     expert_output = expert_output.view(-1, expert_output.shape[-1])
-        #     ans = torch.matmul(combine_weights, expert_output)
-
         expert_output = expert_output.reshape(inputs.shape)
         # print("final expert output size {}".format(expert_output.size()))
+        print(expert_output.size())
         return expert_output
 
-    def forward_x(self, inputs: torch.Tensor) -> torch.Tensor:
+    def forward_route(self, inputs: torch.Tensor) -> torch.Tensor:
         """
         Args:
             inputs (torch.Tensor): The input tensor of shape (batch_size, seq_len, hidden_size)
@@ -241,6 +252,7 @@ class SparseMLP(nn.Module):
             ans = torch.matmul(combine_weights, expert_output)
 
         ans = ans.reshape(inputs.shape)
+        print(ans.size())
         return ans
 
     def _local_process(self, expert_in: torch.Tensor) -> torch.Tensor:

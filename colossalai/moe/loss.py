@@ -43,8 +43,10 @@ class MoeCrossEntropyLoss(_Loss):
         `Cross_entropy <https://pytorch.org/docs/stable/generated/torch.nn.functional.cross_entropy.html#torch.nn.functional.cross_entropy>`_.
         """
         main_loss = self.loss(*args)
-        aux_loss = MOE_MANAGER.get_loss()
-        return main_loss + self.aux_weight * aux_loss
+        #aux_loss = MOE_MANAGER.get_loss()
+        #return main_loss + self.aux_weight * aux_loss
+        print("using MoeCrossEntropyLoss")
+        return main_loss
 
 
 class MoeLoss(_Loss):
@@ -74,5 +76,7 @@ class MoeLoss(_Loss):
             The ``args`` and ``kwargs`` may include different parameters varying with different loss function.
         """
         main_loss = self.loss_fn(*args, **kwargs)
-        aux_loss = MOE_MANAGER.get_loss()
-        return main_loss + self.aux_weight * aux_loss
+        #aux_loss = MOE_MANAGER.get_loss()
+        #return main_loss + self.aux_weight * aux_loss
+        print("using MoeLoss")
+        return main_loss
