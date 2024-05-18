@@ -58,8 +58,8 @@ def compute_ppl(model, tokenizer, input_strs, gen_kwargs,
     def encode_text_batch(input_strs):
         inputs = tokenizer.batch_encode_plus(input_strs,
                                              padding='longest',
-                                            #  add_special_tokens=add_special_tokens,
-                                            #  split_special_tokens=split_special_tokens,
+                                             #  add_special_tokens=add_special_tokens,
+                                             #  split_special_tokens=split_special_tokens,
                                              return_tensors="pt")
         input_ids = inputs.input_ids.to(model.device)
         attention_mask = inputs.attention_mask.to(model.device)
@@ -78,7 +78,7 @@ def compute_ppl(model, tokenizer, input_strs, gen_kwargs,
             print("mean loss {}".format(loss))
         loss_sum += loss.item()
         print("loss sum {}".format(loss_sum))
-    
+
     mean_loss = loss_sum / num_texts  # 计算整个数据集的损失均值
     mean_ppl = torch.exp(torch.tensor(mean_loss))
     return mean_ppl
@@ -101,13 +101,13 @@ def apply_llama_chat_template(tokenizer, input_strs, sys_prompt):
 # @param {type:"string"}
 pytorch_checkpoint_path = "OrionZheng/openmoe-8b-chat"
 pytorch_checkpoint_path = "OrionZheng/openmoe-8b"
-#pytorch_checkpoint_path = "OrionZheng/openmoe-base"
+# pytorch_checkpoint_path = "OrionZheng/openmoe-base"
 model_name = pytorch_checkpoint_path.split("/")[-1]
 # @param ["", "0", "0,1", "0,1,2"] {allow-input: true}
 available_gpu_ids_str = "0"
 memory_per_gpu = "38GiB"  # @param ["", "38GiB"] {allow-input: true}
 cpu_memory = '50GiB'  # @param ["50GiB"] {allow-input: true}
-model_dtype = 'bfloat161'  # @param ["float32", "bfloat16"]
+model_dtype = 'bfloat16'  # @param ["float32", "bfloat16"]
 offload = False  # @param {type:"boolean"}
 
 if torch.cuda.is_available():
@@ -180,13 +180,14 @@ parser.add_argument("--input", default="./dataset/questions.jsonl",
                     help="MTBench数据集路径")
 parser.add_argument("--output-dir", default="./mt_bench_output",
                     help="结果路径")
-parser.add_argument("--prune-layer", type=int, default=-
-                    1, help="进行剪枝的层索引，-1为不对任何层剪枝")
+parser.add_argument("--score-mode", type=str, default="l1", help="层间对专家排序的指标")
+# parser.add_argument("--prune-layer", type=int, default=-
+#                     1, help="进行剪枝的层索引，-1为不对任何层剪枝")
 # parser.add_argument("--num-expert", type=int, default=32, help="模型专家的总数")
 # parser.add_argument("--num-layer", type=int, default=4, help="模型专家的总数")
 parser.add_argument("--batch-size", type=int, default=4, help="并行解码的样本数量")
-parser.add_argument("--expert-idxs", type=str,
-                    help="进行剪枝的层使用专家的索引，多个专家用短横线分割，如1-6-9-11")
+# parser.add_argument("--expert-idxs", type=str,
+#                     help="进行剪枝的层使用专家的索引，多个专家用短横线分割，如1-6-9-11")
 
 args = parser.parse_args()
 
@@ -201,9 +202,12 @@ with open(args.input, 'r') as fp:
             questions.append(question)
 raw_questions = list(map(lambda x: x["turns"][0], questions))
 
-prune_layer = args.prune_layer
+# prune_layer = args.prune_layer
+# expert_idxs = args.expert_idxs
 batch_size = args.batch_size
 output_path = args.output_dir
+score_mode = args.score_mode
+
 if pytorch_checkpoint_path == "OrionZheng/openmoe-base":
     num_layer = 3
     num_expert = 8
@@ -214,24 +218,73 @@ print(f"{pytorch_checkpoint_path} num_layer {num_layer} num_expert {num_expert}"
 if not os.path.exists(output_path):
     os.makedirs(output_path)
 
-# set variables
-expert_idxs = args.expert_idxs
-expert_idxs = list(map(int, expert_idxs.split("-")))
-print("expert idxs {}".format(expert_idxs))
+# prune layer idx and expert idx
+if score_mode == "l1":
+    prune_layer_tmp = [1]*5 + [2]*5
+    expert_idxs_tmp = [
+        '27', "27-20", "27-20-28-26", "27-20-28-26-10-19-7-25", "27-20-28-26-10-19-7-25-8-4-14-12-15-9-16-30",
+        '24', "24-19", "24-19-17-25", "24-19-17-25-3-31-8-22", "24-19-17-25-3-31-8-22-15-21-12-18-27-5-2-29",
+    ]
+elif score_mode == "ww_alpha":
+    prune_layer_tmp = [0]*5 + [1]*5 + [2]*5 + [3]*5
+    expert_idxs_tmp = [
+        '18',
+        '18-5',
+        '18-5-2-26',
+        '18-5-2-26-4-20-15-30',
+        '18-5-2-26-4-20-15-30-24-6-1-14-8-23-25-9',
+        '20',
+        '20-23',
+        '20-23-0-13',
+        '20-23-0-13-30-3-5-28',
+        '20-23-0-13-30-3-5-28-7-4-31-21-9-22-16-19',
+        '2',
+        '2-17',
+        '2-17-22-19',
+        '2-17-22-19-6-13-7-10',
+        '2-17-22-19-6-13-7-10-14-4-29-30-23-18-8-31',
+        '24',
+        '24-20',
+        '24-20-23-22',
+        '24-20-23-22-1-3-17-29',
+        '24-20-23-22-1-3-17-29-18-13-2-16-31-19-28-25',
+    ]
+elif score_mode == "random":
+    prune_layer_tmp = [0]*5 + [1]*5 + [2]*5 + [3]*5
+    expert_idxs_tmp = []
+    for _ in range(4):
+        for num in [1, 2, 4, 8, 16]:
+            expert_idxs = random.sample(range(32), num)
+            expert_idxs_str = "-".join(list(map(str, expert_idxs)))
+            expert_idxs_tmp.append(expert_idxs_str)
 
-expert_idxs_list.append(expert_idxs)
-prune_layer_list.append(prune_layer)
-layer_num_list.append(num_layer)
+elif score_mode == 'test_route':
+    prune_layer_tmp = [-1]
+    expert_idxs_tmp = ["0"]
+elif score_mode == "test_prune":
+    prune_layer_tmp = [0]
+    expert_idxs_tmp = ["0-1-3-4"]
 
-# eval ppl on benchmark
+print("prune layer: {}".format(prune_layer_tmp))
+print("expert idxs: {}".format(expert_idxs_tmp))
+# decode and eval ppl
+for prune_layer, expert_idxs in zip(prune_layer_tmp, expert_idxs_tmp):
+    expert_idxs = list(map(int, expert_idxs.split("-")))
+    print("expert idxs {}".format(expert_idxs))
 
-mean_ppl = compute_ppl(model, tokenizer, raw_questions, None)
-print("mean_ppl {}".format(mean_ppl))
-mean_ppl = mean_ppl.tolist()
-output = {"mean_ppl": mean_ppl}
-expert_idxs_str = expert_idxs
-model_id = "{}_pruneLayer{}_expert{}".format(
-    model_name, prune_layer, expert_idxs_str)
-output_filename = "{}.json".format(model_id)
-output_filename = os.path.join(output_path, output_filename)
-json.dump(output, open(output_filename, 'w'))
+    expert_idxs_list.append(expert_idxs)
+    prune_layer_list.append(prune_layer)
+    layer_num_list.append(num_layer)
+
+    # eval ppl on benchmark
+
+    mean_ppl = compute_ppl(model, tokenizer, raw_questions, None)
+    print("mean_ppl {}".format(mean_ppl))
+    mean_ppl = mean_ppl.tolist()
+    output = {"mean_ppl": mean_ppl}
+    expert_idxs_str = expert_idxs
+    model_id = "{}_pruneLayer{}_expert{}".format(
+        model_name, prune_layer, expert_idxs_str)
+    output_filename = "{}.json".format(model_id)
+    output_filename = os.path.join(output_path, output_filename)
+    json.dump(output, open(output_filename, 'w'))

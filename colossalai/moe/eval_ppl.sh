@@ -1,22 +1,14 @@
 #! /bin/bash
 
-# no prune
-python eval_ppl.py --prune-layer -1 --expert-idxs "0-1"
+# test
+# python eval_ppl.py --score-mode test_route
 
-# prune last layer
-python eval_ppl.py --prune-layer 3 --expert-idxs "7"
-python eval_ppl.py --prune-layer 3 --expert-idxs "7-20"
-python eval_ppl.py --prune-layer 3 --expert-idxs "7-20-17-15"
-python eval_ppl.py --prune-layer 3 --expert-idxs "7-20-17-15-29-18-6-12"
-#python eval_ppl.py --prune-layer 3 --expert-idxs "7-20-17-15-29-18-6-12-3-5-31-30-9-4-24-11"
-#python eval_ppl.py --prune-layer 3 --expert-idxs "7-20-17-15-29-18-6-12-3-5-31-30-9-4-24-11-13-28-26-25-21-14-16-22-27-23-2-10-19-8"
-#python eval_ppl.py --prune-layer 3 --expert-idxs "7-20-17-15-29-18-6-12-3-5-31-30-9-4-24-11-13-28-26-25-21-14-16-22-27-23-2-10-19-8-0-1"
+# prune by l1
+python eval_ppl.py --score-mode l1 --output-dir output_l1
 
-# prune first layer
-python eval_ppl.py --prune-layer 0 --expert-idxs "19"
-python eval_ppl.py --prune-layer 0 --expert-idxs "19-12"
-python eval_ppl.py --prune-layer 0 --expert-idxs "19-12-7-25"
-python eval_ppl.py --prune-layer 0 --expert-idxs "19-12-7-25-3-13-23-18"
-#python eval_ppl.py --prune-layer 0 --expert-idxs "19-12-7-25-3-13-23-18-5-10-26-29-24-21-6-27"
-#python eval_ppl.py --prune-layer 0 --expert-idxs "19-12-7-25-3-13-23-18-5-10-26-29-24-21-6-27-15-28-8-22-4-20-11-17-31-30-9-2-16-14"
-#python eval_ppl.py --prune-layer 0 --expert-idxs "19-12-7-25-3-13-23-18-5-10-26-29-24-21-6-27-15-28-8-22-4-20-11-17-31-30-9-2-16-14-0-1"
+# prune by random
+python eval_ppl.py --score-mode random --output-dir output_random
+
+# prune by weightwatcher alpha
+python eval_ppl.py --score-mode ww_alpha --output-dir output_ww_alpha
+

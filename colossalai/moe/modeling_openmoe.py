@@ -962,10 +962,12 @@ class OpenMoeForCausalLM(OpenMoePreTrainedModel):
                         # Flatten the tokens
                         
                         #loss = F.cross_entropy(shift_logits.view(-1, shift_logits.size(-1)), shift_labels.view(-1))
+                        shift_logits = F.softmax(shift_logits, dim=-1)
                         selected_probabilities = torch.gather(shift_logits, dim=-1, index=shift_labels.unsqueeze(-1))
 
 # 计算交叉熵
                         loss = -torch.log(selected_probabilities)
+                        print("neg loss {}".format(loss))
                         return loss
 
                     return custom_forward
