@@ -139,7 +139,7 @@ class SparseMLP(nn.Module):
 
     def forward(self, inputs):
         _global_layer = global_layer_list[-1]  # 整个推理脚本中调用layer对象的次数
-        _pune_layer = prune_layer_list[-1]  # 进行剪枝的层索引
+        _prune_layer_idx_to_expert_idxs = prune_layer_list[-1]  # 进行剪枝的层索引
         _layer_num = layer_num_list[-1]  # 模型的层数
         global_layer_list[:] = []
         if _global_layer == _layer_num-1:
@@ -148,15 +148,17 @@ class SparseMLP(nn.Module):
             global_layer_list.append(_global_layer + 1)
         
 
-        if _global_layer % _layer_num == _pune_layer:
+        _relative_layer = _global_layer % _layer_num
+        if _relative_layer in _prune_layer_idx_to_expert_idxs:
+            _prune_expert_idxs = _prune_layer_idx_to_expert_idxs[_relative_layer]
             print("layer_num {} current_layer {}, use PUNE layer".format(_layer_num, _global_layer))
-            output = self.forward_pune(inputs)
+            output = self.forward_pune(inputs, _prune_expert_idxs)
         else:
             print("layer_num {} current_layer {}, use ROUTE layer".format(_layer_num, _global_layer))
             output = self.forward_route(inputs)
         return output
 
-    def forward_pune(self, inputs: torch.Tensor) -> torch.Tensor:
+    def forward_pune(self, inputs: torch.Tensor, prune_expert_idxs) -> torch.Tensor:
         """
         Args:
             inputs (torch.Tensor): The input tensor of shape (batch_size, seq_len, hidden_size)
@@ -174,8 +176,8 @@ class SparseMLP(nn.Module):
 
         # weighted output: (-1, self.hidden_size)
         # expert_idxs = list(map(int, expert_idxs.split(":")))
-        expert_idxs_tmp = expert_idxs_list[-1]
-        index_tensor = torch.tensor(expert_idxs_tmp).to(expert_output.device)
+        # expert_idxs_tmp = expert_idxs_list[-1]
+        index_tensor = torch.tensor(prune_expert_idxs).to(expert_output.device)
         print("expert idxs {}".format(index_tensor))
         selected_expert_output = torch.index_select(expert_output, 0, index_tensor)
         # print("selected expert output size{}".format(selected_expert_output.size()))

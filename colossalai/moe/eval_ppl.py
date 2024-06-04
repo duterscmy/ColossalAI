@@ -202,8 +202,7 @@ with open(args.input, 'r') as fp:
             questions.append(question)
 raw_questions = list(map(lambda x: x["turns"][0], questions))
 
-# prune_layer = args.prune_layer
-# expert_idxs = args.expert_idxs
+
 batch_size = args.batch_size
 output_path = args.output_dir
 score_mode = args.score_mode
@@ -211,103 +210,76 @@ score_mode = args.score_mode
 if pytorch_checkpoint_path == "OrionZheng/openmoe-base":
     num_layer = 3
     num_expert = 8
-else:
+elif "8b" in pytorch_checkpoint_path:
     num_layer = 4
     num_expert = 32
+elif "34b" in pytorch_checkpoint_path:
+    num_layer = 16
+    num_layer = 32
+
 print(f"{pytorch_checkpoint_path} num_layer {num_layer} num_expert {num_expert}")
 if not os.path.exists(output_path):
     os.makedirs(output_path)
 
 # prune layer idx and expert idx
 if score_mode == "l1":
-    prune_layer_tmp = [0]*5 + [1]*5 + [2]*5 + [3]*5
-    expert_idxs_tmp = [
-        '1',
-        '1-0',
-        '1-0-14-16',
-        '1-0-14-16-2-9-30-31',
-        '1-0-14-16-2-9-30-31-17-11-20-4-22-8-28-15',
-
-        '0',
-        '0-1',
-        '0-1-18-13',
-        '0-1-18-13-5-22-31-6',
-        '0-1-18-13-5-22-31-6-21-29-11-17-23-24-3-2',
-
-        '1',
-        '1-0',
-        '1-0-26-4',
-        '1-0-26-4-13-28-16-20',
-        '1-0-26-4-13-28-16-20-10-11-23-7-14-9-6-30',
-
-        '1',
-        '1-0',
-        '1-0-8-19',
-        '1-0-8-19-10-2-23-27',
-        '1-0-8-19-10-2-23-27-22-16-14-21-25-26-28-13',
-    ]
+    layer_idx_to_expert_idxs = {
+        0: '1-0-14-16-2-9-30-31-17-11-20-4-22-8-28-15'.split("-"),
+        1: '0-1-18-13-5-22-31-6-21-29-11-17-23-24-3-2'.split("-"),
+        2: '1-0-26-4-13-28-16-20-10-11-23-7-14-9-6-30'.split("-"),
+        3: '1-0-8-19-10-2-23-27-22-16-14-21-25-26-28-13'.split("-"),
+    }
 elif score_mode == "ww_alpha":
-    prune_layer_tmp = [0]*5 + [1]*5 + [2]*5 + [3]*5
-    expert_idxs_tmp = [
-        '17',
-        '17-10',
-        '17-10-19-16',
-        '17-10-19-16-0-21-28-27',
-        '17-10-19-16-0-21-28-27-31-12-3-29-7-11-13-22',
-
-        '15',
-        '15-1',
-        '15-1-6-25',
-        '15-1-6-25-11-24-27-8',
-        '15-1-6-25-11-24-27-8-14-18-2-17-10-26-29-12',
-        '26',
-        '26-9',
-        '26-9-5-20',
-        '26-9-5-20-25-21-27-3',
-        '26-9-5-20-25-21-27-3-12-1-15-11-24-28-16-0',
-
-        '30',
-        '30-0',
-        '30-0-27-7',
-        '30-0-27-7-21-12-14-4',
-        '30-0-27-7-21-12-14-4-10-6-8-26-11-5-15-9',
-    ]
+    layer_idx_to_expert_idxs = {
+        0: '17-10-19-16-0-21-28-27-31-12-3-29-7-11-13-22'.split("-"),
+        1: '15-1-6-25-11-24-27-8-14-18-2-17-10-26-29-12'.split("-"),
+        2: '26-9-5-20-25-21-27-3-12-1-15-11-24-28-16-0'.split("-"),
+        3: '30-0-27-7-21-12-14-4-10-6-8-26-11-5-15-9'.split("-"),
+    }
 elif score_mode == "random":
-    prune_layer_tmp = [0]*5 + [1]*5 + [2]*5 + [3]*5
-    expert_idxs_tmp = []
-    for _ in range(4):
-        for num in [1, 2, 4, 8, 16]:
-            expert_idxs = random.sample(range(32), num)
-            expert_idxs_str = "-".join(list(map(str, expert_idxs)))
-            expert_idxs_tmp.append(expert_idxs_str)
+    layer_idx_to_expert_idxs = {}
+    for layer_idx in range(4):
+        expert_idxs = random.sample(range(32), 16)
+        expert_idxs_str = "-".join(list(map(str, expert_idxs)))
+        layer_idx_to_expert_idxs[layer_idx] = expert_idxs_str.split("-")
 
 elif score_mode == 'test_route':
-    prune_layer_tmp = [-1]
-    expert_idxs_tmp = ["0"]
+    layer_idx_to_expert_idxs = {
+            0: '0-1-2-3-4-5-7-6'.split("-"),
+            1: '0-1-2-3-4-5-7-6'.split("-"),
+            2: '0-1-2-3-4-5-7-6'.split("-"),
+        }
+
 elif score_mode == "test_prune":
-    prune_layer_tmp = [0]
-    expert_idxs_tmp = ["0-1-3-4"]
+    layer_idx_to_expert_idxs = {
+        0: '0-1-2-3-4-5-7-6'.split("-"),
+        1: '0-1-2-3-4-5-7-6'.split("-"),
+        2: '0-1-2-3-4-5-7-6'.split("-"),
+    }
 
-print("prune layer: {}".format(prune_layer_tmp))
-print("expert idxs: {}".format(expert_idxs_tmp))
+
 # decode and eval ppl
-for prune_layer, expert_idxs in zip(prune_layer_tmp, expert_idxs_tmp):
-    expert_idxs = list(map(int, expert_idxs.split("-")))
-    print("expert idxs {}".format(expert_idxs))
+for prune_layer_num in range(1, num_layer+1): # 对前多少层进行剪枝
+    for prune_expert_num in [1,2,4,8]:
 
-    expert_idxs_list.append(expert_idxs)
-    prune_layer_list.append(prune_layer)
-    layer_num_list.append(num_layer)
+        prune_layer_idx_to_expert_idxs = {}
+        for prune_layer_idx in range(prune_layer_num):
+            prune_expert_idxs = layer_idx_to_expert_idxs[prune_layer_idx][:prune_expert_num]
+            prune_expert_idxs = list(map(int, prune_expert_idxs))
+            prune_layer_idx_to_expert_idxs[prune_layer_idx] = prune_expert_idxs
 
-    # eval ppl on benchmark
+        #expert_idxs_list.append(expert_idxs)
+        prune_layer_list.append(prune_layer_idx_to_expert_idxs)
+        layer_num_list.append(num_layer)
 
-    mean_ppl = compute_ppl(model, tokenizer, raw_questions, None)
-    print("mean_ppl {}".format(mean_ppl))
-    mean_ppl = mean_ppl.tolist()
-    output = {"mean_ppl": mean_ppl}
-    expert_idxs_str = expert_idxs
-    model_id = "{}_pruneLayer{}_expert{}".format(
-        model_name, prune_layer, expert_idxs_str)
-    output_filename = "{}.json".format(model_id)
-    output_filename = os.path.join(output_path, output_filename)
-    json.dump(output, open(output_filename, 'w'))
+        # eval ppl on benchmark
+        mean_ppl = compute_ppl(model, tokenizer, raw_questions, None)
+        print("mean_ppl {}".format(mean_ppl))
+        mean_ppl = mean_ppl.tolist()
+        output = {"mean_ppl": mean_ppl}
+        #expert_idxs_str = expert_idxs
+        model_id = "{}_pruneLayerNum{}_pruneExpertNum{}".format(
+            model_name, prune_layer_num, prune_expert_num)
+        output_filename = "{}.json".format(model_id)
+        output_filename = os.path.join(output_path, output_filename)
+        json.dump(output, open(output_filename, 'w'))
