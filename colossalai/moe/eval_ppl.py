@@ -12,7 +12,7 @@ import json
 import shortuuid
 import time
 
-from colossalai.moe.expert_idx import expert_idxs_list, global_layer_list, prune_layer_list, layer_num_list
+from colossalai.moe.expert_idx import global_layer_list, layer_num_list
 
 
 class StopAfterEosTextGenerated(LogitsProcessor):
@@ -193,15 +193,25 @@ args = parser.parse_args()
 
 
 # read benchmark
-with open(args.input, 'r') as fp:
-    questions = []
-    for line in fp:
-        line = line.strip()
-        if line:
-            question = json.loads(line)
-            questions.append(question)
-raw_questions = list(map(lambda x: x["turns"][0], questions))
+if args.input == './dataset/questions.jsonl':
+    with open(args.input, 'r') as fp:
+        questions = []
+        for line in fp:
+            line = line.strip()
+            if line:
+                question = json.loads(line)
+                questions.append(question)
+        raw_questions = list(map(lambda x: x["turns"][0], questions))
 
+elif args.input == "./dataset/pajama.txt":
+    raw_questions = []
+    with open(args.input, 'r') as fp:
+        for line in fp:
+            line = line.strip()
+            if line:
+                if len(line) > 500:
+                    line = line[:500]
+                raw_questions.append(line)
 
 batch_size = args.batch_size
 output_path = args.output_dir
@@ -221,65 +231,20 @@ print(f"{pytorch_checkpoint_path} num_layer {num_layer} num_expert {num_expert}"
 if not os.path.exists(output_path):
     os.makedirs(output_path)
 
-# prune layer idx and expert idx
-if score_mode == "l1":
-    layer_idx_to_expert_idxs = {
-        0: '1-0-14-16-2-9-30-31-17-11-20-4-22-8-28-15'.split("-"),
-        1: '0-1-18-13-5-22-31-6-21-29-11-17-23-24-3-2'.split("-"),
-        2: '1-0-26-4-13-28-16-20-10-11-23-7-14-9-6-30'.split("-"),
-        3: '1-0-8-19-10-2-23-27-22-16-14-21-25-26-28-13'.split("-"),
-    }
-elif score_mode == "ww_alpha":
-    layer_idx_to_expert_idxs = {
-        0: '17-10-19-16-0-21-28-27-31-12-3-29-7-11-13-22'.split("-"),
-        1: '15-1-6-25-11-24-27-8-14-18-2-17-10-26-29-12'.split("-"),
-        2: '26-9-5-20-25-21-27-3-12-1-15-11-24-28-16-0'.split("-"),
-        3: '30-0-27-7-21-12-14-4-10-6-8-26-11-5-15-9'.split("-"),
-    }
-elif score_mode == "random":
-    layer_idx_to_expert_idxs = {}
-    for layer_idx in range(4):
-        expert_idxs = random.sample(range(32), 16)
-        expert_idxs_str = "-".join(list(map(str, expert_idxs)))
-        layer_idx_to_expert_idxs[layer_idx] = expert_idxs_str.split("-")
-
-elif score_mode == 'test_route':
-    layer_idx_to_expert_idxs = {
-            0: '0-1-2-3-4-5-7-6'.split("-"),
-            1: '0-1-2-3-4-5-7-6'.split("-"),
-            2: '0-1-2-3-4-5-7-6'.split("-"),
-        }
-
-elif score_mode == "test_prune":
-    layer_idx_to_expert_idxs = {
-        0: '0-1-2-3-4-5-7-6'.split("-"),
-        1: '0-1-2-3-4-5-7-6'.split("-"),
-        2: '0-1-2-3-4-5-7-6'.split("-"),
-    }
-
-
 # decode and eval ppl
-for prune_layer_num in range(1, num_layer+1): # 对前多少层进行剪枝
-    for prune_expert_num in [1,2,4,8]:
+layer_num_list.append(num_layer)
+# eval ppl on benchmark
+mean_ppl = compute_ppl(model, tokenizer, raw_questions, None)
+print("mean_ppl {}".format(mean_ppl))
 
-        prune_layer_idx_to_expert_idxs = {}
-        for prune_layer_idx in range(prune_layer_num):
-            prune_expert_idxs = layer_idx_to_expert_idxs[prune_layer_idx][:prune_expert_num]
-            prune_expert_idxs = list(map(int, prune_expert_idxs))
-            prune_layer_idx_to_expert_idxs[prune_layer_idx] = prune_expert_idxs
-
-        #expert_idxs_list.append(expert_idxs)
-        prune_layer_list.append(prune_layer_idx_to_expert_idxs)
-        layer_num_list.append(num_layer)
-
-        # eval ppl on benchmark
-        mean_ppl = compute_ppl(model, tokenizer, raw_questions, None)
-        print("mean_ppl {}".format(mean_ppl))
-        mean_ppl = mean_ppl.tolist()
-        output = {"mean_ppl": mean_ppl}
-        #expert_idxs_str = expert_idxs
-        model_id = "{}_pruneLayerNum{}_pruneExpertNum{}".format(
-            model_name, prune_layer_num, prune_expert_num)
-        output_filename = "{}.json".format(model_id)
-        output_filename = os.path.join(output_path, output_filename)
-        json.dump(output, open(output_filename, 'w'))
+from colossalai.moe.expert_idx import route_analysis
+output = route_analysis[-1]
+output_tmp = {}
+for k, v in output.items():
+    k = "{}-{}".format(k[0], k[1])
+    output_tmp[k] = v
+output = output_tmp
+model_id = "{}_route_analysis".format(model_name)
+output_filename = "{}.json".format(model_id)
+output_filename = os.path.join(output_path, output_filename)
+json.dump(output, open(output_filename, 'w'))

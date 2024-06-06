@@ -12,7 +12,7 @@ from colossalai.moe.manager import MOE_MANAGER
 from colossalai.moe.routers import MoeRouter, get_router_cls
 from colossalai.moe.utils import create_ep_hierarchical_group, get_noise_generator
 from colossalai.tensor.moe_tensor.api import get_dp_group, get_ep_group, get_ep_group_ranks, get_ep_size
-from colossalai.moe.expert_idx import expert_idxs_list, global_layer_list, prune_layer_list, layer_num_list
+from colossalai.moe.expert_idx import route_analysis, global_layer_list, layer_num_list
 
 class SparseMLP(nn.Module):
     """A class for users to create MoE modules in their models.
@@ -139,7 +139,6 @@ class SparseMLP(nn.Module):
 
     def forward(self, inputs):
         _global_layer = global_layer_list[-1]  # 整个推理脚本中调用layer对象的次数
-        _prune_layer_idx_to_expert_idxs = prune_layer_list[-1]  # 进行剪枝的层索引
         _layer_num = layer_num_list[-1]  # 模型的层数
         global_layer_list[:] = []
         if _global_layer == _layer_num-1:
@@ -149,13 +148,7 @@ class SparseMLP(nn.Module):
         
 
         _relative_layer = _global_layer % _layer_num
-        if _relative_layer in _prune_layer_idx_to_expert_idxs:
-            _prune_expert_idxs = _prune_layer_idx_to_expert_idxs[_relative_layer]
-            print("layer_num {} current_layer {}, use PUNE layer".format(_layer_num, _global_layer))
-            output = self.forward_pune(inputs, _prune_expert_idxs)
-        else:
-            print("layer_num {} current_layer {}, use ROUTE layer".format(_layer_num, _global_layer))
-            output = self.forward_route(inputs)
+        output = self.forward_route(inputs, _relative_layer)
         return output
 
     def forward_pune(self, inputs: torch.Tensor, prune_expert_idxs) -> torch.Tensor:
@@ -188,7 +181,7 @@ class SparseMLP(nn.Module):
         print(expert_output.size())
         return expert_output
 
-    def forward_route(self, inputs: torch.Tensor) -> torch.Tensor:
+    def forward_route(self, inputs: torch.Tensor, relative_layer=0) -> torch.Tensor:
         """
         Args:
             inputs (torch.Tensor): The input tensor of shape (batch_size, seq_len, hidden_size)
@@ -197,6 +190,8 @@ class SparseMLP(nn.Module):
             torch.Tensor: The output tensor of shape (batch_size, seq_len, hidden_size)
         """
         # reshape the input tokens
+        ana = route_analysis[-1]  # (layer_idx, expert_idx) : freq
+
         tokens = inputs.reshape(-1, self.hidden_size)
 
         # the data type of the inputs in the gating should be fp32
@@ -216,7 +211,17 @@ class SparseMLP(nn.Module):
         # the result from the router
         used_capacity, *route_result_list = self.router(
             inputs=gate_output, use_kernel=self.enable_kernel, ep_group=self.ep_group)
-
+        # print("used capacity: {}".format(used_capacity))
+        # print("route_result_list:{}".format(route_result_list))
+        used_capacity_list = used_capacity.tolist()
+        tmp = route_analysis[-1]
+        for expert_idx, freq in enumerate(used_capacity_list):
+            if (relative_layer, expert_idx) in tmp:
+                tmp[(relative_layer, expert_idx)] += freq
+            else:
+                tmp[(relative_layer, expert_idx)] = freq
+        print(tmp)
+        route_analysis.append(tmp)
         # dispatch_data: (num_experts, capacity, hidden_size)
         if self.enable_kernel:
             dispatch_data = MoeDispatch.apply(tokens, *route_result_list[1:])
